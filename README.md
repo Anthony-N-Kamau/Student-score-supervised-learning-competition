@@ -1,7 +1,7 @@
 # Supervised Learning Competition — Student Performance Prediction
 
 ## Overview
-This repository contains the code, report, and predictions for **Assignment 3: Supervised Learning Competition**. The task is framed as a "common task framework" (benchmark-style) machine learning competition: predict a continuous student performance variable (`score`) from a set of student characteristics.
+This repository contains the code, report, and predictions for **MSc Applied Data Science Supervised Learning Competition**. The task is framed as a "common task framework" (benchmark-style) machine learning competition: predict a continuous student performance variable (`score`) from a set of student characteristics.
 
 - **Target variable:** `score`
 - **Performance metric:** Mean Squared Error (MSE)

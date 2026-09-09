@@ -1,0 +1,320 @@
+---
+title: "Supervised learning competition"
+author: 
+  - "Jack Hewett"
+  - "Stefan Houkes"
+  - "Bilal Mokhtar"
+  - "Anthony Kamau"
+  - "Lars van den Bosch"
+date: last-modified
+format:
+  html:
+    toc: true
+    self-contained: true
+    code-fold: true
+    df-print: kable
+---
+
+_We first beginn by loading all the required packages which are the following: _
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(randomForest)
+library(caret)
+```
+
+
+
+# Data description
+
+We then load our training and test data
+
+```{r, warning=FALSE, message=FALSE}
+raw_train_data <- readRDS("train.rds")
+raw_test_data <- readRDS("test.rds")
+
+```
+
+We then checked for missing values in our training data
+```{r}
+
+missing_values_check <- raw_test_data |>  
+  summarise_all(~mean(is.na(.))) |> 
+  pivot_longer(everything(), 
+               names_to = "var", 
+               values_to = "prop_na")
+
+
+# No missing values found
+```
+
+In the first figure we visualized the distribution of the normalized score. The data looks normally distributed with some outliers. We see a small increase at the low scores. This could be because some students did not study or did not show so they received the lowest score. When we compare male and female students we see that male students receive a higher score but it is not yet proven to be significant. when we compare study time, we only see a small impact of study time on the normalized score.
+
+```{r}
+
+ggplot(raw_train_data, aes(x = score)) +
+  geom_histogram(bins = 20, fill = "steelblue", color = "white", alpha = 1) +
+  theme_minimal() +
+  labs(title = "Distribution of Exam Scores",
+       x = "Score", y = "Number of Students") +
+  theme_minimal()
+
+# distribution of the normalized score follows a normal distribution with some outliers
+
+
+ggplot(raw_train_data, aes(x = sex, y = score, fill = sex)) +
+  geom_boxplot(alpha = 1) +
+  theme_minimal() +
+  labs(title = "Exam Scores by Gender", x = "Gender", y = "Score")
+
+# male students higher score (not significantly proven)
+ 
+
+ggplot(raw_train_data, aes(x = factor(studytime), y = score)) +
+  geom_boxplot(fill = "steelblue", alpha = 1) +
+  theme_minimal() +
+  labs(title = "Score by Weekly Study Time", x = "Study Time (1 = <2h, 4 = >10h)", y = "Score")
+# minimal impact of study time on the normalized score.
+
+
+```
+
+# Model description
+
+We used the following models:
+ 
+## Liner regression
+
+We used linear regression because it provides a simple and interpretable baseline model that assumes a straight‑line relationship between predictors and the outcome. By starting with linear regression, we easily understand how each variable contributes to the prediction. It gives us a clear benchmark to compare against more complex models.
+
+## Lasso Regression
+ 
+ We used Lasso regression because it is a linear model that not only fits relationships between predictors and the target but also performs automatic feature selection. By applying an L1 penalty, Lasso shrinks less important coefficients exactly to zero, leaving us with a simpler, more interpretable model. This is especially useful when we have many predictors, some of which may be irrelevant or highly correlated, since Lasso helps us focus on the most influential variables while reducing overfitting.
+ 
+## K Nearest Neighbor (KNN)
+ 
+We used k‑Nearest Neighbors (kNN) because it is a simple, non‑parametric method that makes predictions based on similarity. Instead of assuming a specific functional form between predictors and the target, kNN looks at the closest training examples to a new observation and bases its prediction on them. This makes it flexible and intuitive, particularly when the relationship between features and the outcome is complex or nonlinear. It also provides a useful contrast to regression‑based models, since it relies purely on local patterns in the data.
+
+## Random Forest
+
+We used a Random Forest because it is a powerful ensemble method that combines many decision trees to improve predictive accuracy and robustness. Each tree is trained on a random subset of the data and features, and their predictions are averaged, which reduces variance and guards against overfitting. Random Forests can capture complex nonlinear relationships and interactions between variables without requiring much preprocessing, making them a strong baseline model in many applied machine learning tasks.
+
+
+# Data transformation and pre-processing
+
+First, we identified which variables in the dataset are categorical, such as sex, school, address and others. We then explicitly converted them into factors in both the training and test datasets. This step is important because categorical data needs to be treated differently from numeric data during modeling, ensuring that the algoriithms recognize them as categories rather than continuous numbers.
+
+```{r}
+categorical_vars <- c("school","sex","address","famsize","Pstatus",
+                      "Mjob","Fjob","reason","guardian",
+                      "schoolsup","famsup","paid","activities",
+                      "nursery","higher","internet","romantic")
+
+# Convert to factors
+raw_train_data[categorical_vars] <- lapply(raw_train_data[categorical_vars], factor)
+raw_test_data[categorical_vars]  <- lapply(raw_test_data[categorical_vars], factor)
+```
+
+Next, we made sure that the target variable, score, was stored as a numeric type. This guarantees that the models interpret it correctly as a continuous outcome to be predicted, rather than as a factor or character string. After this, we checked the structure of the training data to confirm that all variables were in the correct format before proceeding.
+
+```{r}
+# Ensure target is numeric
+raw_train_data$score <- as.numeric(raw_train_data$score)
+
+# Check structure
+train_data_str <- str(raw_train_data)
+```
+
+We then identified which predictors were numeric, excluding the target variable. These numeric predictors were standardized using scaling, whichh transforms them to have a mean of zero and a standard deviation of one. Scaling ensures that predictors measured on different scales, such as study time and absences, contribute fairly to the model without one dominating due to its larger numeric range.
+
+```{r}
+# Identify numeric predictors (excluding target 'score')
+num_cols <- setdiff(names(raw_train_data)[sapply(raw_train_data, is.numeric)], "score")
+
+# Scale training predictors
+train_scaled <- raw_train_data
+train_scaled[, num_cols] <- scale(raw_train_data[, num_cols])
+
+# Extract scaling parameters from training
+train_means <- attr(scale(raw_train_data[, num_cols]), "scaled:center")
+train_sds   <- attr(scale(raw_train_data[, num_cols]), "scaled:scale")
+```
+
+Finally, we took the scaling parameters, such as the means and standard deviations, from the training data and used them to transform the test data in the same way. This approach helps prevent data leakage by making sure the test set is scaled just like the training set, using only information from the training data. As a result, we have two clean and well-prepared datasets: one for training and one for testing. Both are ready for reliable model building and evaluation.
+
+```{r}
+# Apply the same scaling to test predictors
+test_scaled <- raw_test_data
+test_scaled[, num_cols] <- scale(test_scaled[, num_cols],
+                                 center = train_means,
+                                 scale  = train_sds)
+```
+
+
+We split the predictors from the target so the model can learn from one set and predict the other. All input features except for the score go into one object, while the score values are stored separately. We also keep a full copy of the scaled training data, which gives us flexibility for modeling and a complete dataset to refer back to.
+
+```{r}
+# dependent variable separation
+X <- train_scaled[, setdiff(names(train), "score")]
+y <- train_scaled$score
+
+
+# re-store our data
+train_data <- train_scaled
+```
+
+
+# Model Comparison
+
+The first step in comparing our models i.e Random Forest, Lasso, k-Nearest Neighbours (kNN) and Linear Regression is to test them under identical conditions. This entails applying cross-validation, using the same training and test splits and evaluating performance using a standardised metric like **MSE** which can be derived from **RMSE**. By standardising the assessment procedure we make sure that variations in outcomes are caused by the models and not by inconsistent testing. 
+
+Every model has unique advantages. linear regression is the most straighforward and less compless model which offers a distinct performance baseline. Lasso expands on our linear model by incorporating regularisation, which can enhance prediction and automatically identify significant features. Random Forest models intricate nonlinear relationships and interactions and kNN finds local patterns in the data. By contrasting them, we  determine whether a straightforward, understandable model is adequate or if more intricate approaches give significant gains.
+
+_Cross Validation_
+
+We used five‑fold cross‑validation ie training on four parts and testing onthe remining one. 
+```{r}
+# 5-fold CV
+model_control <- trainControl(method = "cv", number = 5) 
+```
+
+## Linear regression
+```{r}
+set.seed(11)
+# Train a Linear Regression model
+lm_model <- train(
+  score ~ ., 
+  data = train_data,
+  method = "lm",              
+  trControl = model_control,  
+  metric = "RMSE"             
+)
+
+# View results
+print(lm_model)
+```
+
+
+## Lasso
+```{r, warning=FALSE}
+set.seed(11)
+
+lasso_model <- train(
+  score ~ ., data = train_data,
+  method = "glmnet",
+  trControl = model_control,
+  tuneGrid = expand.grid(alpha = 1,   
+                         lambda = 10^seq(-3, 2, 
+                                         length = 50)),
+  metric = "RMSE"
+)
+
+plot(lasso_model)
+
+print(lasso_model)
+
+```
+
+
+## K-nearest neighbor
+```{r}
+set.seed(11)
+
+knn_model <- train(
+  score ~ ., data = train_data,
+  method = "knn",
+  trControl = model_control,
+  tuneGrid = expand.grid(k = 1:20),
+  metric = "RMSE",
+  preProcess = c("center", "scale")  
+)
+print(knn_model)
+
+```
+
+
+## Random Forest
+```{r}
+set.seed(11)
+
+rf_model <- train(
+  score ~ ., data = train_data,
+  method = "rf",
+  trControl = model_control,
+  tuneLength = 5,
+  metric = "RMSE"
+)
+
+print(rf_model)
+```
+
+
+
+# Chosen model
+
+
+
+```{r}
+results <- resamples(list(
+  Linear = lm_model,
+  Lasso = lasso_model,
+  RF    = rf_model,
+  kNN   = knn_model
+))
+
+results_summary <-  summary(results)
+
+
+# Extract the RMSE statistics table
+rmse_stats <- results_summary$statistics$RMSE
+
+# Get the mean RMSE for each model
+mean_rmse <- rmse_stats[ , "Mean"]
+
+# Convert RMSE to MSE (square it)
+mean_mse <- mean_rmse^2
+
+
+bwplot(results, metric = "RMSE")
+
+```
+
+To find **mse** we just square **rsme**. The **mse** for the models are:
+```{r}
+# performance (mse)
+mean_mse
+```
+
+
+```{r}
+data.frame(
+  model       = c("Linear regression", "Lasso regression", "K-nearest neighbor", "Random forest"),
+  
+  performance = c(0.83, 0.76, 0.88, 0.72),
+  
+  Reason      = c("Simplicity", "Regularization", "Locality", "Ensemble")
+)
+```
+
+
+
+
+
+
+
+# Team member contributions
+
+Write down what each team member contributed to the project.
+
+-   **Jack Hewett**  - knn, data data description, model comparison, lasso
+
+-   **Stefan Houkes** - linear regression, data preparation, model comparison, lasso
+
+-   **Bilal Mokhtar** - knn, model comparison, data description, lasso
+
+-   **Anthony Kamau** - random forest, data description, model comparison, lasso
+
+-   **Lars van den Bosch** - linear regression, data preparation, model comparison, lasso
+
